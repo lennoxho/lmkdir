@@ -1,8 +1,8 @@
 #include <cstdlib>
 #include <iostream>
-#include <string>
 #include <string_view>
 #include <vector>
+#include <boost/container/string.hpp>
 #include <experimental/filesystem>
 
 #include <curses.h>
@@ -58,6 +58,9 @@ int main() {
     CHECK_OK(refresh());
 
     int c;
+    boost::container::string char_buffer;
+    char_buffer.reserve(1024);
+
     while((c = getch()) != KEY_F(1)) {
         switch(c) {
         case KEY_DOWN:
@@ -65,6 +68,22 @@ int main() {
             break;
         case KEY_UP:
             menu_driver(my_menu, REQ_UP_ITEM);
+            break;
+        case KEY_BACKSPACE:
+            if (!char_buffer.empty()) {
+                char_buffer.pop_back();
+                CHECK_OK(mvdelch(LINES - 4, char_buffer.size()));
+                CHECK_OK(refresh());
+            }
+            break;
+        }
+
+        if (isalnum(c)) {
+            CHECK_OK(mvaddch(LINES - 4, char_buffer.size(), c));
+            char_buffer += c;
+            CHECK_OK(refresh());
+        }
+        else if (c == KEY_ENTER) {
             break;
         }
     }
