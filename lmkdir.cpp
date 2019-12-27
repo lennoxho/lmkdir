@@ -9,6 +9,7 @@
 #include <iostream>
 #include <experimental/filesystem>
 
+#include <boost/algorithm/string/find.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/adaptor/tokenized.hpp>
 #include <boost/range/combine.hpp>
@@ -20,7 +21,6 @@
 
 #define FAKE_CREATE_DIRECTORY 0
 
-constexpr char const* const red_dir = "/mnt/d/lenno/Downloads/New/.RED";
 constexpr char const* const manifest_filename = "lmkdir_manifest";
 constexpr int esc_char = 27;
 
@@ -61,6 +61,10 @@ public:
 
     inline const auto &range() const noexcept {
         return m_manifest;
+    }
+
+    inline std::size_t size() const noexcept {
+        return m_manifest.size();
     }
 };
 
@@ -121,8 +125,8 @@ class menu_manager {
         CHECK_OK(refresh());
     }
 
-    bool char_buffer_is_prefix(const std::string_view str) const {
-        return str.find(m_char_buffer) != std::string_view::npos;
+    bool char_buffer_is_substr(const std::string_view str) const {
+        return boost::ifind_first(str, m_char_buffer);
     }
 
 public:
@@ -136,6 +140,8 @@ public:
 
         m_menu = new_menu(m_visible_items.data());
         RUNTIME_ASSERT(m_menu != nullptr);
+
+        CHECK_MENU_OK(set_menu_format(m_menu, LINES - 7, 1));
 
         status_bar_y = LINES - 2;
         sep2_y = LINES - 3;
@@ -186,7 +192,13 @@ public:
             case KEY_BACKSPACE:
                 if (!m_char_buffer.empty()) {
                     m_char_buffer.pop_back();
-                    update([this](const auto &str){ return this->char_buffer_is_prefix(str); });
+
+                    if (m_char_buffer.empty()) {
+                        update([this](auto&){ return true; });
+                    }
+                    else {
+                        update([this](const auto &str){ return this->char_buffer_is_substr(str); });
+                    }
                 }
                 break;
 
@@ -194,7 +206,7 @@ public:
                 {
                     if (isalnum(c) || c == '_' || c == ' ') {
                         m_char_buffer += c;
-                        update([this](const auto &str){ return this->char_buffer_is_prefix(str); });
+                        update([this](const auto &str){ return this->char_buffer_is_substr(str); });
                     }
                 }
             }
@@ -259,11 +271,19 @@ directory_manifest read_directory_manifest(const std::string_view filename) {
 }
 
 void write_directory_manifest(const std::string_view filename, const manifest_manager &manifest_man) {
+    directory_manifest man;
+    man.reserve(manifest_man.size());
+
+    for (const auto &pair : manifest_man.range()) {
+        man.emplace_back(pair.first);
+    }
+    std::sort(man.begin(), man.end());
+
     std::ofstream fs{ filename.data(), std::ios_base::binary };
     RUNTIME_ASSERT(fs);
 
-    for (const auto &pair : manifest_man.range()) {
-        fs << pair.first << "\n";
+    for (const auto &name : man) {
+        fs << name << "\n";
         RUNTIME_ASSERT(fs);
     }
 
@@ -307,7 +327,6 @@ void lmkdir() {
 
 int main() {
     try {
-        fs::current_path(red_dir);
         lmkdir();
     }
     catch (const fatal_error &err) {
