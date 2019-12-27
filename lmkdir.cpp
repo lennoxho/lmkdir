@@ -18,11 +18,13 @@
 #include <menu.h>
 #include "lmkdir_errors.hpp"
 
-#define FAKE_CREATE_DIRECTORY 1
+#define FAKE_CREATE_DIRECTORY 0
 
-constexpr char const* const manifest_filename = "/mnt/d/lenno/Downloads/New/.RED/lmkdir_manifest";
+constexpr char const* const red_dir = "/mnt/d/lenno/Downloads/New/.RED";
+constexpr char const* const manifest_filename = "lmkdir_manifest";
 constexpr int esc_char = 27;
 
+namespace fs = std::experimental::filesystem;
 using directory_manifest = std::vector<std::string>;
 
 class manifest_manager {
@@ -217,7 +219,7 @@ std::string_view strip(std::string_view str) {
         str = str.substr(offset);
     }
 
-    offset = str.find_last_not_of(" \t");
+    offset = str.find_last_not_of(" \t/");
     if (offset != std::string_view::npos) {
         str = str.substr(0, offset + 1);
     }
@@ -271,8 +273,6 @@ void write_directory_manifest(const std::string_view filename, const manifest_ma
 
 bool create_directory(const std::string_view dirname) {
 #if FAKE_CREATE_DIRECTORY == 0
-    namespace fs = std::experimental::filesystem;
-
     try {
         fs::create_directory(dirname.data());
     }
@@ -307,6 +307,7 @@ void lmkdir() {
 
 int main() {
     try {
+        fs::current_path(red_dir);
         lmkdir();
     }
     catch (const fatal_error &err) {
