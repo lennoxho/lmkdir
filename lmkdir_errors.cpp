@@ -1,6 +1,8 @@
-#pragma once
+#include <iostream>
+#include <sstream>
 
 #include <eti.h>
+#include "lmkdir_errors.hpp"
 
 const char* get_menu_error_symbol(int code) noexcept {
     switch (code) {
@@ -37,4 +39,12 @@ const char* get_menu_error_symbol(int code) noexcept {
     default:
         return "UNKNOWN";
     }
+}
+
+void error_out(std::string_view msg, int code, std::string_view file, long line) {
+    std::ostringstream is;
+    is << "Assertion Failed at " << file << ":" << line << " with error code " << get_menu_error_symbol(code) << "\n"
+       << "\t" << msg << "\n";
+
+    if (std::uncaught_exceptions() == 0) throw fatal_error{ is.str(), code };
 }

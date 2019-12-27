@@ -3,31 +3,10 @@
 #include <string_view>
 #include <vector>
 #include <boost/container/string.hpp>
-#include <experimental/filesystem>
 
 #include <curses.h>
 #include <menu.h>
-#include "error_translation.h"
-
-#define NO_ASSERT 0
-
-#if NO_ASSERT != 0
-#   define RUNTIME_CODE_ASSERT(cond, code)
-#else
-#   define RUNTIME_CODE_ASSERT(cond, code) if (!(cond)) { error_out(#cond, code, __FILE__, __LINE__); }
-#endif
-
-#define RUNTIME_ASSERT(cond) RUNTIME_CODE_ASSERT(cond, -1)
-
-#define CHECK_OK(expr) { int res = (expr); (void)res; RUNTIME_CODE_ASSERT(res != ERR, res); }
-#define CHECK_MENU_OK(expr) { int res = (expr); (void)res; RUNTIME_CODE_ASSERT(res == E_OK, res); }
-
-void error_out(std::string_view msg, int code, std::string_view file, long line) {
-    endwin();
-    std::cerr << "Assertion Failed at " << file << ":" << line << " with error code " << get_menu_error_symbol(code) << "\n"
-              << "\t" << msg << "\n";
-    std::abort();
-}
+#include "lmkdir_errors.hpp"
 
 int main() {
     const std::vector<std::string_view> choices = {
@@ -35,11 +14,15 @@ int main() {
         "bar"
     };
 
-    initscr();
-
-    CHECK_OK(cbreak());
-    CHECK_OK(noecho());
-    CHECK_OK(keypad(stdscr, TRUE));
+    struct screen_init_ {
+        screen_init_() {
+            initscr();
+            CHECK_OK(cbreak());
+            CHECK_OK(noecho());
+            CHECK_OK(keypad(stdscr, TRUE));
+        }
+        ~screen_init_() { endwin(); }
+    } screen_init;
 
     const std::size_t n_choices = choices.size();
     std::vector<ITEM*> my_items(n_choices + 1, nullptr);
@@ -95,5 +78,4 @@ int main() {
             CHECK_MENU_OK(free_item(item));
         }
     }
-    CHECK_OK(endwin());
 }
