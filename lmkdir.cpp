@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <experimental/filesystem>
 
@@ -28,21 +29,25 @@ namespace fs = std::experimental::filesystem;
 using directory_manifest = std::vector<std::string>;
 
 class manifest_manager {
-    std::unordered_map<std::string, ITEM*> m_manifest;
+    std::unordered_set<std::string> m_manifest;
+    std::unordered_map<ITEM*, std::string_view> m_items;
 
 public:
     manifest_manager(directory_manifest&& initial_names)
     {
-        m_manifest.reserve(100);
+        m_manifest.reserve(initial_names.size());
+        m_items.reserve(initial_names.size());
 
         for (auto &name : initial_names) {
             add_name(std::move(name));
         }
+
+        initial_names.clear();
     }
 
     ~manifest_manager() {
-        for (auto &pair : m_manifest) {
-            free_item(pair.second);
+        for (auto &pair : m_items) {
+            free_item(pair.first);
         }
     }
 
@@ -51,20 +56,20 @@ public:
 
     template <typename T>
     void add_name(T &&name) {
-        auto res = m_manifest.emplace(std::forward<T>(name), nullptr);
-        if (res.second) {
-            auto &pair = *res.first;
-            pair.second = new_item(pair.first.c_str(), "");
-            RUNTIME_ASSERT(pair.second != nullptr);
+        auto [name_iter, is_new_name] = m_manifest.emplace(std::forward<T>(name));
+        if (is_new_name) {
+            auto [item_iter, item_inserted] = m_items.emplace(new_item(name_iter->c_str(), ""), *name_iter);
+            RUNTIME_ASSERT(item_iter->first != nullptr);
+            RUNTIME_ASSERT(item_inserted);
         }
     }
 
     inline const auto &range() const noexcept {
-        return m_manifest;
+        return m_items;
     }
 
     inline std::size_t size() const noexcept {
-        return m_manifest.size();
+        return m_items.size();
     }
 };
 
@@ -75,6 +80,7 @@ class menu_manager {
 
     manifest_manager &m_manifest_manager;
     MENU* m_menu;
+    ITEM* m_curr_item;
     bool m_posted = false;
 
     int status_bar_y;
@@ -85,10 +91,11 @@ class menu_manager {
     template <typename Func>
     void filter_items(Func &&func) {
         m_visible_items.clear();
+        m_visible_items.emplace_back(m_curr_item);
 
         for (const auto &pair : m_manifest_manager.range()) {
-            if (func(pair.first)) {
-                m_visible_items.emplace_back(pair.second);
+            if (func(pair.second)) {
+                m_visible_items.emplace_back(pair.first);
             }
         }
 
@@ -116,11 +123,10 @@ class menu_manager {
         CHECK_OK(printw(m_status_bar.c_str()));
 
         filter_items(func);
-        if (m_visible_items.size() > 1) {
-            CHECK_MENU_OK(set_menu_items(m_menu, m_visible_items.data()));
-            CHECK_MENU_OK(post_menu(m_menu));
-            m_posted = true;
-        }
+
+        CHECK_MENU_OK(set_menu_items(m_menu, m_visible_items.data()));
+        CHECK_MENU_OK(post_menu(m_menu));
+        m_posted = true;
 
         CHECK_OK(refresh());
     }
@@ -130,11 +136,28 @@ class menu_manager {
     }
 
 public:
+    class result {
+        std::string_view m_name;
+        bool m_is_new;
+
+    public:
+        result(std::string_view name, bool is_new)
+        :m_name{ name },
+         m_is_new{ is_new }
+        {}
+
+        inline std::string_view name() const noexcept { return m_name; }
+        inline bool is_new() const noexcept { return m_is_new; }
+    };
+
     menu_manager(manifest_manager &manifest_manager)
     :m_manifest_manager{ manifest_manager }
     {
         m_char_buffer.reserve(1024);
         m_visible_items.reserve(100);
+
+        m_curr_item = new_item("<Current>", "");
+        RUNTIME_ASSERT(m_curr_item != nullptr);
 
         filter_items([](auto&){ return true; });
 
@@ -152,17 +175,18 @@ public:
     ~menu_manager() {
         if (m_posted) unpost_menu(m_menu);
         free_menu(m_menu);
+        free_item(m_curr_item);
     }
 
     menu_manager(const menu_manager&) = delete;
     menu_manager &operator=(const menu_manager&) = delete;
 
-    std::optional<std::string> next() {
+    std::optional<result> next() {
         m_char_buffer.clear();
         update([](auto&){ return true; });
 
         while (true) {
-            const int c = getch();
+            int c = getch();
 
             switch(c) {
             case esc_char:
@@ -174,17 +198,26 @@ public:
             case KEY_UP:
                 menu_driver(m_menu, REQ_UP_ITEM);
                 break;
+            case KEY_HOME:
+                menu_driver(m_menu, REQ_FIRST_ITEM);
+                break;
+            case KEY_END:
+                menu_driver(m_menu, REQ_LAST_ITEM);
+                break;
 
             case int('\n'):
                 {
                     ITEM* item = current_item(m_menu);
-                    if (item != nullptr && m_visible_items.size() > 1) {
+
+                    if (item == m_curr_item) {
+                        if (!m_char_buffer.empty()) {
+                            return result{ m_char_buffer, true };
+                        }
+                    }
+                    else if (item != nullptr) {
                         const char* name = item_name(item);
                         RUNTIME_ASSERT(name != nullptr);
-                        return name;
-                    }
-                    else if (!m_char_buffer.empty()) {
-                        return m_char_buffer;
+                        return result{ name, false };
                     }
                 }
                 break;
@@ -205,6 +238,7 @@ public:
             default:
                 {
                     if (isalnum(c) || c == '_' || c == ' ') {
+                        c = tolower(c);
                         m_char_buffer += c;
                         update([this](const auto &str){ return this->char_buffer_is_substr(str); });
                     }
@@ -213,13 +247,20 @@ public:
         }
     }
 
-    void notify(const std::string &dirname, bool success) {
+    void notify(const result &res, bool success) {
         if (success) {
-            m_manifest_manager.add_name(dirname);
-            m_status_bar = "Successfully created directory \"" + dirname + "\"";
+            if (res.is_new()) {
+                m_manifest_manager.add_name(res.name());
+            }
+
+            m_status_bar = "Successfully created directory \"";
+            m_status_bar += res.name();
+            m_status_bar += "\"";
         }
         else {
-            m_status_bar = "Failed to create directory \"" + dirname + "\"";
+            m_status_bar = "Failed to create directory \"";
+            m_status_bar += res.name();
+            m_status_bar += "\"";
         }
     }
 
@@ -271,11 +312,11 @@ directory_manifest read_directory_manifest(const std::string_view filename) {
 }
 
 void write_directory_manifest(const std::string_view filename, const manifest_manager &manifest_man) {
-    directory_manifest man;
+    std::vector<std::string_view> man;
     man.reserve(manifest_man.size());
 
-    for (const auto &pair : manifest_man.range()) {
-        man.emplace_back(pair.first);
+    for (const auto [item, str] : manifest_man.range()) {
+        man.emplace_back(str);
     }
     std::sort(man.begin(), man.end());
 
@@ -317,9 +358,9 @@ void lmkdir() {
     manifest_manager manifest_man{ read_directory_manifest(manifest_filename) };
     menu_manager menu_man{ manifest_man };
 
-    while (auto dir_opt = menu_man.next()) {
-        bool success = create_directory(*dir_opt);
-        menu_man.notify(*dir_opt, success);
+    while (auto opt = menu_man.next()) {
+        bool success = create_directory(opt->name());
+        menu_man.notify(*opt, success);
     }
 
     write_directory_manifest(manifest_filename, manifest_man);
