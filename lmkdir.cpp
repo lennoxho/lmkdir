@@ -75,6 +75,7 @@ public:
 
 class menu_manager {
     std::vector<ITEM*> m_visible_items;
+    std::vector<ITEM*> m_items_back_buffer;
     std::string m_char_buffer;
     std::string m_status_bar;
 
@@ -90,6 +91,8 @@ class menu_manager {
 
     template <typename Func>
     void filter_items(Func &&func) {
+        std::swap(m_visible_items, m_items_back_buffer);
+
         m_visible_items.clear();
         m_visible_items.emplace_back(m_curr_item);
 
@@ -155,6 +158,7 @@ public:
     {
         m_char_buffer.reserve(1024);
         m_visible_items.reserve(100);
+        m_items_back_buffer.reserve(100);
 
         m_curr_item = new_item("<Current>", "");
         RUNTIME_ASSERT(m_curr_item != nullptr);
