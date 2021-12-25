@@ -17,6 +17,8 @@ add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
 add_executable(lmkdir lmkdir.cpp lmkdir_errors.cpp)
 add_executable(simple_menu simple_menu.cpp lmkdir_errors.cpp)
 
+target_compile_options(lmkdir PRIVATE -Wall)
+
 target_link_libraries(lmkdir PRIVATE -lstdc++fs -lncurses -lmenu -lboost_regex -ltcmalloc)
 target_link_libraries(lmkdir PRIVATE Microsoft.GSL::GSL)
 target_include_directories(lmkdir PRIVATE ${Boost_INCLUDE_DIR})

@@ -78,7 +78,8 @@ public:
 class menu_manager {
     std::vector<ITEM*> m_visible_items;
     std::vector<ITEM*> m_items_back_buffer;
-    std::vector<std::size_t> m_levenshtein_buffer;
+    std::vector<std::int64_t> m_levenshtein_buffer;
+    std::vector<std::byte> m_levenshtein_bitset;
     std::string m_char_buffer;
     std::string m_status_bar;
 
@@ -139,26 +140,21 @@ class menu_manager {
     }
 
 #if USE_LEVENSHTEIN != 0
-    struct CUSTOM_LEVENSHTEIN_COST_TABLE {
-        static constexpr std::size_t deletion = 2u;
-        static constexpr std::size_t insertion = 0u;
-        static constexpr std::size_t substitution = 1u;
-    };
-
     void edit(std::string_view curr_str) {
-        std::vector<std::pair<std::size_t, ITEM*>> results;
+        std::vector<std::pair<std::int64_t, ITEM*>> results;
         m_levenshtein_buffer.resize(curr_str.size() + 1);
+        m_levenshtein_bitset.resize((curr_str.size() + CHAR_BIT - 1) / CHAR_BIT);
 
         for (const auto &pair : m_manifest_manager.range()) {
-            auto &back = results.emplace_back(0u, pair.first);
+            auto &back = results.emplace_back(std::numeric_limits<std::int64_t>::max(), pair.first);
             
             if (!boost::ifind_first(pair.second, curr_str)) {
-                back.first = levenshtein_distance<char, false, CUSTOM_LEVENSHTEIN_COST_TABLE>(curr_str, pair.second, m_levenshtein_buffer);
+                back.first = modified_levenshtein_distance<char, false>(curr_str, pair.second, m_levenshtein_buffer, m_levenshtein_bitset);
             }
         }
 
         std::sort(results.begin(), results.end(), 
-                  [](const auto &lhs, const auto &rhs){ return lhs.first < rhs.first; });
+                  [](const auto &lhs, const auto &rhs){ return lhs.first > rhs.first; });
 
         auto post = [&]() {
             std::swap(m_visible_items, m_items_back_buffer);
@@ -216,6 +212,7 @@ public:
         m_visible_items.reserve(100);
         m_items_back_buffer.reserve(100);
         m_levenshtein_buffer.reserve(1024);
+        m_levenshtein_bitset.reserve(128);
 
         m_curr_item = new_item("<Current>", "");
         RUNTIME_ASSERT(m_curr_item != nullptr);

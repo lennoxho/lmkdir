@@ -19,41 +19,58 @@ namespace DETAIL {
     
 } // namespace DETAIL
 
-struct LEVENSHTEIN_COST_TABLE {
-    static constexpr std::size_t deletion = 1u;
-    static constexpr std::size_t insertion = 1u;
-    static constexpr std::size_t substitution = 1u;
+struct LEVENSHTEIN_SCORE_TABLE {
+    static constexpr std::int64_t deletion = -5;
+    static constexpr std::int64_t insertion = -1;
+    static constexpr std::int64_t substitution = -5;
+
+    static constexpr std::int64_t match = 3;
+    static constexpr std::int64_t consecutive_match = 15;
 };
 
-template <typename CharType, bool CaseSensitive = true, typename CostTable = LEVENSHTEIN_COST_TABLE>
-std::size_t levenshtein_distance(std::basic_string_view<CharType> lhs, std::basic_string_view<CharType> rhs, 
-                                 gsl::span<std::size_t> working_buffer) 
+template <typename CharType, bool CaseSensitive = true, typename ScoreTable = LEVENSHTEIN_SCORE_TABLE>
+std::int64_t modified_levenshtein_distance(std::basic_string_view<CharType> lhs, std::basic_string_view<CharType> rhs, 
+                                           gsl::span<std::int64_t> working_buffer, gsl::span<std::byte> working_bitset) 
 {
     if (lhs.size() > rhs.size()) std::swap(lhs, rhs);
     RUNTIME_ASSERT(working_buffer.size() > lhs.size());
+    RUNTIME_ASSERT(working_bitset.size() * CHAR_BIT >= lhs.size());
 
     const auto buffer = working_buffer.data();
     const auto buffer_end = buffer + lhs.size() + 1u;
+    const auto bitset = working_bitset.data();
 
-    std::iota(buffer, buffer_end, 0u);
+    {
+        std::int64_t n = 0;
+        std::generate(buffer, buffer_end, [&n]{ return n--;});
+    }
+    std::memset(bitset, 0, working_bitset.size());
 
-    std::size_t diag = 0u;
+    std::int64_t diag = 0;
     for (std::size_t i = 0u; i < rhs.size(); ++i) { 
-        diag = std::exchange(buffer[0u], i + 1u);
+        diag = std::exchange(buffer[0u], -static_cast<std::int64_t>(i + 1u));
 
-        for (std::size_t j = 0; j < lhs.size(); ++j) {
+        for (std::size_t j = 0u; j < lhs.size(); ++j) {
+            const auto bitoffset = j / CHAR_BIT;
+            const auto bitmask = std::byte(1u) << (j % CHAR_BIT);
+            
             if (CaseSensitive ? (lhs[j] == rhs[i]) : DETAIL::char_ieq(lhs[j], rhs[i])) {
-                diag = std::exchange(buffer[j + 1u], diag);
+                auto score = diag + ScoreTable::match;
+                if ((bitset[bitoffset] & bitmask) != std::byte(0u)) score += ScoreTable::consecutive_match;
+
+                diag = std::exchange(buffer[j + 1u], score);
+                bitset[bitoffset] |= bitmask;
             }
             else {
-                /* UP   */ auto deletion_cost = buffer[j + 1u] + CostTable::deletion; 
-                /* LEFT */ auto insertion_cost = buffer[j] + CostTable::insertion;
-                /* DIAG */ auto substitution_cost = diag + CostTable::substitution;
+                /* UP   */ auto deletion_cost = buffer[j + 1u] + ScoreTable::deletion;
+                /* LEFT */ auto insertion_cost = buffer[j] + ScoreTable::insertion;
+                /* DIAG */ auto substitution_cost = diag + ScoreTable::substitution;
 
-                auto cost = std::min(deletion_cost, insertion_cost);
-                cost = std::min(cost, substitution_cost);
+                auto score = std::max(insertion_cost, deletion_cost);
+                score = std::max(score, substitution_cost);
 
-                diag = std::exchange(buffer[j + 1u], cost);
+                diag = std::exchange(buffer[j + 1u], score);
+                bitset[bitoffset] &= ~bitmask;
             }
         }
     }
@@ -61,9 +78,14 @@ std::size_t levenshtein_distance(std::basic_string_view<CharType> lhs, std::basi
     return buffer[lhs.size()];
 }
 
-template <typename CharType, bool CaseSensitive = true, typename CostTable = LEVENSHTEIN_COST_TABLE>
-inline std::size_t levenshtein_distance(std::basic_string_view<CharType> lhs, std::basic_string_view<CharType> rhs) {
-    auto size = std::min(lhs.size(), rhs.size());
-    auto buffer = std::make_unique<std::size_t[]>(size + 1);
-    return levenshtein_distance<CharType, CaseSensitive, CostTable>(lhs, rhs, gsl::make_span(buffer.get(), size + 1));
+template <typename CharType, bool CaseSensitive = true, typename ScoreTable = LEVENSHTEIN_SCORE_TABLE>
+inline std::int64_t modified_levenshtein_distance(std::basic_string_view<CharType> lhs, std::basic_string_view<CharType> rhs) {
+    auto size = std::min(lhs.size(), rhs.size()) + 1u;
+    auto buffer = std::make_unique<std::int64_t[]>(size);
+    auto size_bytes = (size + CHAR_BIT - 1u) / CHAR_BIT;
+    auto bitset = std::make_unique<std::byte[]>(size_bytes);
+
+    return modified_levenshtein_distance<CharType, CaseSensitive, ScoreTable>(lhs, rhs, 
+                                                                              gsl::make_span(buffer.get(), size), 
+                                                                              gsl::make_span(bitset.get(), size_bytes));
 }
