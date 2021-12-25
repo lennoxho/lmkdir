@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <iostream>
-#include <experimental/filesystem>
+#include <filesystem>
 
 #include <boost/algorithm/string/find.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -19,13 +19,15 @@
 #include <curses.h>
 #include <menu.h>
 #include "lmkdir_errors.hpp"
+#include "levenshtein.hpp"
 
 #define FAKE_CREATE_DIRECTORY 0
+#define USE_LEVENSHTEIN 1
 
 constexpr char const* const manifest_filename = "lmkdir_manifest";
 constexpr int esc_char = 27;
 
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 using directory_manifest = std::vector<std::string>;
 
 class manifest_manager {
@@ -76,6 +78,7 @@ public:
 class menu_manager {
     std::vector<ITEM*> m_visible_items;
     std::vector<ITEM*> m_items_back_buffer;
+    std::vector<std::size_t> m_levenshtein_buffer;
     std::string m_char_buffer;
     std::string m_status_bar;
 
@@ -89,24 +92,21 @@ class menu_manager {
     int input_bar_y;
     int sep1_y;
 
-    template <typename Func>
-    void filter_items(Func &&func) {
+    void post_all_items() {
         std::swap(m_visible_items, m_items_back_buffer);
 
         m_visible_items.clear();
         m_visible_items.emplace_back(m_curr_item);
-
+        
         for (const auto &pair : m_manifest_manager.range()) {
-            if (func(pair.second)) {
-                m_visible_items.emplace_back(pair.first);
-            }
+            m_visible_items.emplace_back(pair.first);
         }
 
         m_visible_items.emplace_back(nullptr);
     }
 
-    template <typename Func>
-    void update(Func &&func) {
+    template <typename PostFunc>
+    void update(PostFunc &&post_func) {
         if (m_posted) {
             CHECK_MENU_OK(unpost_menu(m_menu));
             m_posted = false;
@@ -125,7 +125,7 @@ class menu_manager {
         clrtoeol();
         CHECK_OK(printw(m_status_bar.c_str()));
 
-        filter_items(func);
+        post_func();
 
         CHECK_MENU_OK(set_menu_items(m_menu, m_visible_items.data()));
         CHECK_MENU_OK(post_menu(m_menu));
@@ -133,10 +133,66 @@ class menu_manager {
 
         CHECK_OK(refresh());
     }
-
-    bool char_buffer_is_substr(const std::string_view str) const {
-        return boost::ifind_first(str, m_char_buffer);
+    
+    void reset() {
+        update([this]() { this->post_all_items(); });
     }
+
+#if USE_LEVENSHTEIN != 0
+    struct CUSTOM_LEVENSHTEIN_COST_TABLE {
+        static constexpr std::size_t deletion = 2u;
+        static constexpr std::size_t insertion = 0u;
+        static constexpr std::size_t substitution = 1u;
+    };
+
+    void edit(std::string_view curr_str) {
+        std::vector<std::pair<std::size_t, ITEM*>> results;
+        m_levenshtein_buffer.resize(curr_str.size() + 1);
+
+        for (const auto &pair : m_manifest_manager.range()) {
+            auto &back = results.emplace_back(0u, pair.first);
+            
+            if (!boost::ifind_first(pair.second, curr_str)) {
+                back.first = levenshtein_distance<char, false, CUSTOM_LEVENSHTEIN_COST_TABLE>(curr_str, pair.second, m_levenshtein_buffer);
+            }
+        }
+
+        std::sort(results.begin(), results.end(), 
+                  [](const auto &lhs, const auto &rhs){ return lhs.first < rhs.first; });
+
+        auto post = [&]() {
+            std::swap(m_visible_items, m_items_back_buffer);
+
+            m_visible_items.clear();
+            m_visible_items.emplace_back(m_curr_item);
+
+            for (const auto &pair : results) {
+                m_visible_items.emplace_back(pair.second);
+            }
+
+            m_visible_items.emplace_back(nullptr);
+        };
+        update(post);
+    }
+#else
+    void edit(std::string_view curr_str) {
+        auto post = [&]() {
+            std::swap(m_visible_items, m_items_back_buffer);
+
+            m_visible_items.clear();
+            m_visible_items.emplace_back(m_curr_item);
+
+            for (const auto &pair : m_manifest_manager.range()) {
+                if (boost::ifind_first(pair.second, curr_str)) {
+                    m_visible_items.emplace_back(pair.first);
+                }
+            }
+
+            m_visible_items.emplace_back(nullptr);
+        };
+        update(post);
+    }
+#endif
 
 public:
     class result {
@@ -159,11 +215,12 @@ public:
         m_char_buffer.reserve(1024);
         m_visible_items.reserve(100);
         m_items_back_buffer.reserve(100);
+        m_levenshtein_buffer.reserve(1024);
 
         m_curr_item = new_item("<Current>", "");
         RUNTIME_ASSERT(m_curr_item != nullptr);
 
-        filter_items([](auto&){ return true; });
+        post_all_items();
 
         m_menu = new_menu(m_visible_items.data());
         RUNTIME_ASSERT(m_menu != nullptr);
@@ -187,7 +244,7 @@ public:
 
     std::optional<result> next() {
         m_char_buffer.clear();
-        update([](auto&){ return true; });
+        reset();
 
         while (true) {
             int c = getch();
@@ -231,10 +288,10 @@ public:
                     m_char_buffer.pop_back();
 
                     if (m_char_buffer.empty()) {
-                        update([this](auto&){ return true; });
+                        reset();
                     }
                     else {
-                        update([this](const auto &str){ return this->char_buffer_is_substr(str); });
+                        edit(m_char_buffer);
                     }
                 }
                 break;
@@ -244,7 +301,7 @@ public:
                     if (isalnum(c) || c == '_' || c == ' ') {
                         c = tolower(c);
                         m_char_buffer += c;
-                        update([this](const auto &str){ return this->char_buffer_is_substr(str); });
+                        edit(m_char_buffer);
                     }
                 }
             }
