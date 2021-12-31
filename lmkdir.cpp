@@ -389,37 +389,15 @@ directory_manifest read_directory_manifest(const std::string_view filename) {
     return manifest;
 }
 
-void write_directory_manifest(const std::string_view filename, const manifest_manager &manifest_man) {
-    std::vector<std::string_view> man;
-    man.reserve(manifest_man.size());
-
-    for (const auto &[str, item] : manifest_man.range()) {
-        man.emplace_back(str);
-    }
-    std::sort(man.begin(), man.end());
-
-    std::ofstream fs{ filename.data(), std::ios_base::binary };
-    RUNTIME_MSG_ASSERT(fs, filename);
-
-    for (const auto &name : man) {
-        fs << name << "\n";
-        RUNTIME_MSG_ASSERT(fs, filename);
-    }
-
-    fs.flush();
-    RUNTIME_MSG_ASSERT(fs, filename);
-}
-
 bool create_directory(const std::string_view dirname) {
 #if FAKE_CREATE_DIRECTORY == 0
     try {
-        fs::create_directory(dirname.data());
+        return fs::create_directory(dirname.data());
     }
     catch (const fs::filesystem_error &err) {
         return false;
     }
 #endif
-    return true;
 }
 
 bool delete_directory(const std::string_view dirname) {
@@ -432,6 +410,34 @@ bool delete_directory(const std::string_view dirname) {
     }
 #endif
     return true;
+}
+
+void write_directory_manifest(const std::string_view filename, const manifest_manager &manifest_man) {
+    auto tmp_filename = std::string{ filename } + ".tmp";
+    {
+        std::vector<std::string_view> man;
+        man.reserve(manifest_man.size());
+    
+        for (const auto &[str, item] : manifest_man.range()) {
+            man.emplace_back(str);
+        }
+        std::sort(man.begin(), man.end());
+    
+        std::ofstream fs{ tmp_filename.data(), std::ios_base::binary };
+        RUNTIME_MSG_ASSERT(fs, tmp_filename);
+    
+        for (const auto &name : man) {
+            fs << name << "\n";
+            RUNTIME_MSG_ASSERT(fs, tmp_filename);
+        }
+    
+        fs.flush();
+        RUNTIME_MSG_ASSERT(fs, tmp_filename);
+    }
+    
+    std::error_code err;
+    fs::rename(tmp_filename, filename, err);
+    RUNTIME_MSG_ASSERT(!err, filename);
 }
 
 std::optional<std::string> get_real_executable_name() {
@@ -503,8 +509,12 @@ int main(int, char const* const* const argv) {
         lmkdir(argv[0]);
     }
     catch (const fatal_error &err) {
-        std::cerr << "Error: " << err.what();
+        std::cerr << "Error: " << err.what() << '\n';
         return err.error_code;
+    }
+    catch (const std::exception &err) {
+        std::cerr << "Error: " << err.what() << '\n';
+        return -1;
     }
 
     return 0;

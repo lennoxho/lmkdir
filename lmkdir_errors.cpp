@@ -48,7 +48,7 @@ void error_out(std::string_view msg, int code, std::string_view file, long line)
     if (code != 0) {
         is << '(' << get_menu_error_symbol(code) << ") ";
     }
-    is << msg << '\n';
+    is << msg;
 
     if (std::uncaught_exceptions() == 0) throw fatal_error{ is.str(), code };
 }
