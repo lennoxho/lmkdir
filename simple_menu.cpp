@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string_view>
 #include <vector>
-#include <boost/container/string.hpp>
+#include <string>
 
 #include <curses.h>
 #include <menu.h>
@@ -41,7 +41,7 @@ int main() {
     CHECK_OK(refresh());
 
     int c;
-    boost::container::string char_buffer;
+    std::string char_buffer;
     char_buffer.reserve(1024);
 
     while((c = getch()) != KEY_F(1)) {

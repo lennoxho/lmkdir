@@ -12,12 +12,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXE_LINKER_FLAGS -fuse-ld=gold)
+add_compile_options(-Wall)
 add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
 
 add_executable(lmkdir lmkdir.cpp lmkdir_errors.cpp)
 add_executable(simple_menu simple_menu.cpp lmkdir_errors.cpp)
-
-target_compile_options(lmkdir PRIVATE -Wall)
+target_precompile_headers(lmkdir PRIVATE lmkdir.hpp)
 
 target_link_libraries(lmkdir PRIVATE -lstdc++fs -lncurses -lmenu -lboost_regex -ltcmalloc)
 target_link_libraries(lmkdir PRIVATE Microsoft.GSL::GSL)
