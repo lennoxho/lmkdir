@@ -1,8 +1,9 @@
-#include "lmkdir.hpp"
-#include "levenshtein.hpp"
-
 #define FAKE_CREATE_DIRECTORY 0
 #define USE_LEVENSHTEIN 1
+#define USE_SELLERS 0
+
+#include "lmkdir.hpp"
+#include "levenshtein.hpp"
 
 constexpr char const* const manifest_name = "lmkdir_manifest";
 constexpr int esc_char = 27;

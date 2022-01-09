@@ -46,14 +46,18 @@ std::int64_t modified_levenshtein_distance(std::basic_string_view<CharType> src,
     RUNTIME_ASSERT(working_bitset.size() * CHAR_BIT >= src.size());
 
     const auto buffer = working_buffer.data();
-    const auto buffer_end = buffer + src.size() + 1u;
+    const auto buffer_size = src.size() + 1u;
     const auto bitset = working_bitset.data();
 
+#if USE_SELLERS != 0
+    std::memset(buffer, 0, buffer_size);
+#else
     {
         std::int64_t n = 0;
-        std::generate(buffer, buffer_end, [&n]{ return n--;});
+        std::generate(buffer, buffer + buffer_size, [&n]{ return n--;});
     }
-    std::memset(bitset, 0, working_bitset.size());
+#endif
+    std::memset(bitset, 0, (src.size() + CHAR_BIT - 1u) / CHAR_BIT);
 
     std::size_t num_matches = 0u;
     std::int64_t diag = 0;
